@@ -2,10 +2,13 @@
 from __future__ import (unicode_literals, division, absolute_import, print_function)
 
 import json
+import forecastio
+import datetime
 
 from powerline.lib.url import urllib_read, urllib_urlencode
 from powerline.lib.threaded import KwThreadedSegment
 from powerline.segments import with_docstring
+from collections import namedtuple
 
 
 # XXX Warning: module name must not be equal to the segment name as long as this
@@ -100,6 +103,7 @@ temp_units = {
 	'K': 'K',
 }
 
+_WeatherKey = namedtuple('Key', 'location_query precipitation_probability')
 
 class WeatherSegment(KwThreadedSegment):
 	interval = 600
@@ -107,8 +111,8 @@ class WeatherSegment(KwThreadedSegment):
 	location_urls = {}
 
 	@staticmethod
-	def key(location_query=None, **kwargs):
-		return location_query
+	def key(location_query=None, precipitation_probability=None, **kwargs):
+		return _WeatherKey(location_query, precipitation_probability)
 
 	def get_request_url(self, location_query):
 		try:
@@ -135,8 +139,8 @@ class WeatherSegment(KwThreadedSegment):
 				'http://query.yahooapis.com/v1/public/yql?' + urllib_urlencode(query_data))
 			return url
 
-	def compute_state(self, location_query):
-		url = self.get_request_url(location_query)
+	def compute_state(self, key):
+		url = self.get_request_url(key.location_query)
 		raw_response = urllib_read(url)
 		if not raw_response:
 			self.error('Failed to get response')
@@ -161,13 +165,24 @@ class WeatherSegment(KwThreadedSegment):
 				icon_names = ('unknown',)
 				self.error('Unknown condition code: {0}', condition_code)
 
-		return (temp, icon_names)
+		if key.precipitation_probability is not None:
+		    lat = -30.042357
+		    lng = -51.233275
+		    for key in key.precipitation_probability.split(","):
+			try:
+			    forecast_data = forecastio.load_forecast(key, lat, lng)
+			    forecast_data.request_time = datetime.datetime.now().strftime("%H:%M")
+			    break
+			except (KeyError, ValueError):
+			    self.exception('cant access forecastio: {0}', ValueError)
 
-	def render_one(self, weather, icons=None, unit='C', temp_format=None, temp_coldest=-30, temp_hottest=40, **kwargs):
+		return (temp, icon_names, forecast_data)
+
+	def render_one(self, weather, icons=None, unit='C', temp_format=None, temp_coldest=-30, temp_hottest=40, precipitation_probability=None, **kwargs):
 		if not weather:
 			return None
 
-		temp, icon_names = weather
+		temp, icon_names, forecast_data = weather
 
 		for icon_name in icon_names:
 			if icons:
@@ -178,6 +193,14 @@ class WeatherSegment(KwThreadedSegment):
 			icon = weather_conditions_icons[icon_names[-1]]
 
 		temp_format = temp_format or ('{temp:.0f}' + temp_units[unit])
+		if precipitation_probability is not None:
+		    currently = forecast_data.currently()
+		    byHour = forecast_data.hourly()
+		    temp_format += ' {1}%({0})>{2}%>>{3}%'.format(forecast_data.request_time, 
+								currently.precipProbability, 
+								byHour.data[1].precipProbability, 
+								byHour.data[2].precipProbability)
+
 		converted_temp = temp_conversions[unit](temp)
 		if temp <= temp_coldest:
 			gradient_level = 0
