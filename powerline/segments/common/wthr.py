@@ -221,29 +221,42 @@ class WeatherSegment(KwThreadedSegment):
 			hour_difference = forecast_data.request_time.replace(second=0, microsecond=0) - currently.time.replace(second=0, microsecond=0)
 			rain_forecast = [
 				{
-					'contents':  ' {0} {1}%/{2}'.format(
-						icons['rainy'],
-						math.trunc(worst_change * 100),
-						(forecast_data.request_time + hour_difference).strftime("%H:%M")
-					),
+					'contents': ' {0}'.format( icons['rainy']),
 					'highlight_groups': ['weather_condition_rainy', 'weather_conditions', 'weather'],
+					'divider_highlight_group': 'background:divider',
+				},
+				{
+					'contents': '{0}%'.format( math.trunc(worst_change * 100)),
+					'highlight_groups': ['weather_temp_gradient', 'weather_temp', 'weather'],
+					'divider_highlight_group': 'background:divider',
+					'gradient_level': math.trunc(worst_change * 100)
+				},
+				{
+					'contents': '/{0}'.format( (forecast_data.request_time + hour_difference).strftime("%H:%M")),
 					'divider_highlight_group': 'background:divider',
 				}
 			]
 			for hourData in byHour.data[1:]:
 				if hourData.precipProbability > worst_change:
 					worst_change = hourData.precipProbability
-					rain_forecast.append(
+					rain_forecast += [
 						{
-							'contents':  ' {0}%/{1}'.format(
-								math.trunc(worst_change * 100),
-								(hourData.time + hour_difference).strftime("%H:%M")
-							),
+							'contents': ' {0}'.format( icons['rainy']),
 							'highlight_groups': ['weather_condition_rainy', 'weather_conditions', 'weather'],
 							'divider_highlight_group': 'background:divider',
+						},
+						{
+							'contents': '{0}%'.format( math.trunc(worst_change * 100)),
+							'highlight_groups': ['weather_temp_gradient', 'weather_temp', 'weather'],
+							'divider_highlight_group': 'background:divider',
+							'gradient_level': math.trunc(worst_change * 100)
+						},
+						{
+							'contents': '/{0}'.format( (hourData.time + hour_difference).strftime("%H:%M")),
+							'divider_highlight_group': 'background:divider',
 						}
-					)
-				if len(rain_forecast) >= 3:
+					]
+				if len(rain_forecast) >= 9:
 					break
 			if worst_change > 0:
 				line = line + rain_forecast
