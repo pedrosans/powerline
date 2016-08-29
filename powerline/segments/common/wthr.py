@@ -4,6 +4,7 @@ from __future__ import (unicode_literals, division, absolute_import, print_funct
 import json
 import forecastio
 import datetime
+import math
 
 from powerline.lib.url import urllib_read, urllib_urlencode
 from powerline.lib.threaded import KwThreadedSegment
@@ -103,7 +104,8 @@ temp_units = {
 	'K': 'K',
 }
 
-_WeatherKey = namedtuple('Key', 'location_query precipitation_probability')
+_WeatherKey = namedtuple('Key', 'location_query forecast_io')
+_ForecastKey = namedtuple('Key', 'api_keys lat lng precipitation_probability')
 
 class WeatherSegment(KwThreadedSegment):
 	interval = 600
@@ -111,8 +113,8 @@ class WeatherSegment(KwThreadedSegment):
 	location_urls = {}
 
 	@staticmethod
-	def key(location_query=None, precipitation_probability=None, **kwargs):
-		return _WeatherKey(location_query, precipitation_probability)
+	def key(location_query=None, forecast_io=None, **kwargs):
+		return _WeatherKey(location_query, _ForecastKey(forecast_io['api_keys'], forecast_io['lat'], forecast_io['lng'], forecast_io['precipitation_probability']))
 
 	def get_request_url(self, location_query):
 		try:
@@ -165,20 +167,18 @@ class WeatherSegment(KwThreadedSegment):
 				icon_names = ('unknown',)
 				self.error('Unknown condition code: {0}', condition_code)
 
-		if key.precipitation_probability is not None:
-		    lat = -30.042357
-		    lng = -51.233275
-		    for key in key.precipitation_probability.split(","):
-			try:
-			    forecast_data = forecastio.load_forecast(key, lat, lng)
-			    forecast_data.request_time = datetime.datetime.now().strftime("%H:%M")
-			    break
-			except (KeyError, ValueError):
-			    self.exception('cant access forecastio: {0}', ValueError)
+		if key.forecast_io.api_keys is not None:
+			for api_key in key.forecast_io.api_keys.split(","):
+				try:
+					forecast_data = forecastio.load_forecast(api_key, key.forecast_io.lat, key.forecast_io.lng)
+					forecast_data.request_time = datetime.datetime.now()
+					break
+				except (KeyError, ValueError):
+					self.exception('cant access forecastio: {0}', ValueError)
 
 		return (temp, icon_names, forecast_data)
 
-	def render_one(self, weather, icons=None, unit='C', temp_format=None, temp_coldest=-30, temp_hottest=40, precipitation_probability=None, **kwargs):
+	def render_one(self, weather, icons=None, unit='C', temp_format=None, temp_coldest=-30, temp_hottest=40, forecast_io=None, **kwargs):
 		if not weather:
 			return None
 
@@ -193,14 +193,6 @@ class WeatherSegment(KwThreadedSegment):
 			icon = weather_conditions_icons[icon_names[-1]]
 
 		temp_format = temp_format or ('{temp:.0f}' + temp_units[unit])
-		if precipitation_probability is not None:
-		    currently = forecast_data.currently()
-		    byHour = forecast_data.hourly()
-		    temp_format += ' {1}%({0})>{2}%>>{3}%'.format(forecast_data.request_time, 
-								currently.precipProbability, 
-								byHour.data[1].precipProbability, 
-								byHour.data[2].precipProbability)
-
 		converted_temp = temp_conversions[unit](temp)
 		if temp <= temp_coldest:
 			gradient_level = 0
@@ -209,7 +201,7 @@ class WeatherSegment(KwThreadedSegment):
 		else:
 			gradient_level = (temp - temp_coldest) * 100.0 / (temp_hottest - temp_coldest)
 		groups = ['weather_condition_' + icon_name for icon_name in icon_names] + ['weather_conditions', 'weather']
-		return [
+		line = [
 			{
 				'contents': icon + ' ',
 				'highlight_groups': groups,
@@ -222,6 +214,41 @@ class WeatherSegment(KwThreadedSegment):
 				'gradient_level': gradient_level,
 			},
 		]
+		if forecast_io is not None:
+			currently = forecast_data.currently()
+			byHour = forecast_data.hourly()
+			worst_change = currently.precipProbability;
+			hour_difference = forecast_data.request_time.replace(second=0, microsecond=0) - currently.time.replace(second=0, microsecond=0)
+			rain_forecast = [
+				{
+					'contents':  ' {0} {1}%/{2}'.format(
+						icons['rainy'],
+						math.trunc(worst_change * 100),
+						(forecast_data.request_time + hour_difference).strftime("%H:%M")
+					),
+					'highlight_groups': ['weather_condition_rainy', 'weather_conditions', 'weather'],
+					'divider_highlight_group': 'background:divider',
+				}
+			]
+			for hourData in byHour.data[1:]:
+				if hourData.precipProbability > worst_change:
+					worst_change = hourData.precipProbability
+					rain_forecast.append(
+						{
+							'contents':  ' {0}%/{1}'.format(
+								math.trunc(worst_change * 100),
+								(hourData.time + hour_difference).strftime("%H:%M")
+							),
+							'highlight_groups': ['weather_condition_rainy', 'weather_conditions', 'weather'],
+							'divider_highlight_group': 'background:divider',
+						}
+					)
+				if len(rain_forecast) >= 3:
+					break
+			if worst_change > 0:
+				line = line + rain_forecast
+
+		return line
 
 
 weather = with_docstring(WeatherSegment(),
