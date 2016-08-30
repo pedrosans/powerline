@@ -218,7 +218,7 @@ class WeatherSegment(KwThreadedSegment):
 			currently = forecast_data.currently()
 			byHour = forecast_data.hourly()
 			worst_change = currently.precipProbability;
-			hour_difference = forecast_data.request_time.replace(second=0, microsecond=0) - currently.time.replace(second=0, microsecond=0)
+			hour_difference = forecast_data.request_time.replace(minute=0, second=0, microsecond=0) - currently.time.replace(minute=0, second=0, microsecond=0)
 			rain_forecast = [
 				{
 					'contents': ' {0}'.format( icons['rainy']),
@@ -226,41 +226,46 @@ class WeatherSegment(KwThreadedSegment):
 					'divider_highlight_group': 'background:divider',
 				},
 				{
-					'contents': '{0}%'.format( math.trunc(worst_change * 100)),
+					'contents': ' {0}%'.format( math.trunc(worst_change * 100)),
 					'highlight_groups': ['weather_temp_gradient', 'weather_temp', 'weather'],
 					'divider_highlight_group': 'background:divider',
 					'gradient_level': math.trunc(worst_change * 100)
 				},
 				{
-					'contents': '/{0}'.format( (forecast_data.request_time + hour_difference).strftime("%H:%M")),
+					#'contents': ' {0}'.format( (forecast_data.request_time).strftime("%H:%M")),
 					'divider_highlight_group': 'background:divider',
 				}
 			]
 			for hourData in byHour.data[1:]:
-				if hourData.precipProbability > worst_change:
+				if math.trunc(hourData.precipProbability * 100) > math.trunc(worst_change * 100) and len(rain_forecast) <= 9:
 					worst_change = hourData.precipProbability
 					rain_forecast += [
 						{
-							'contents': ' {0}'.format( icons['rainy']),
+							#'contents': ' {0}'.format( icons['rainy']),
 							'highlight_groups': ['weather_condition_rainy', 'weather_conditions', 'weather'],
 							'divider_highlight_group': 'background:divider',
 						},
 						{
-							'contents': '{0}%'.format( math.trunc(worst_change * 100)),
+							'contents': ' {0}%'.format( math.trunc(worst_change * 100)),
 							'highlight_groups': ['weather_temp_gradient', 'weather_temp', 'weather'],
 							'divider_highlight_group': 'background:divider',
 							'gradient_level': math.trunc(worst_change * 100)
 						},
 						{
-							'contents': '/{0}'.format( (hourData.time + hour_difference).strftime("%H:%M")),
+							'contents': ' {0}'.format( (hourData.time + hour_difference).strftime("%Hh")),
 							'divider_highlight_group': 'background:divider',
 						}
 					]
-				if len(rain_forecast) >= 9:
+				if 'rain' not in hourData.summary.lower() and 'drizzle' not in hourData.summary.lower():
+					rain_forecast.append(
+						{
+							'contents': ' ' + hourData.summary + '/' + (hourData.time + hour_difference).strftime("%Hh"),
+							'divider_highlight_group': 'background:divider',
+						}
+					)
 					break
 			if worst_change > 0:
 				line = line + rain_forecast
-
 		return line
 
 
