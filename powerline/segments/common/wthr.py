@@ -114,7 +114,10 @@ class WeatherSegment(KwThreadedSegment):
 
 	@staticmethod
 	def key(location_query=None, forecast_io=None, **kwargs):
-		return _WeatherKey(location_query, _ForecastKey(forecast_io['api_keys'], forecast_io['lat'], forecast_io['lng'], forecast_io['precipitation_probability']))
+		return _WeatherKey(
+			location_query,
+			_ForecastKey(forecast_io['api_keys'], forecast_io['lat'], forecast_io['lng'], forecast_io['precipitation_probability'])
+		)
 
 	def get_request_url(self, location_query):
 		try:
@@ -215,59 +218,61 @@ class WeatherSegment(KwThreadedSegment):
 			},
 		]
 		if forecast_io is not None:
+			line += self.render_forecast(forecast_data, icons['rainy'])
+		return line
+	def render_forecast(self, forecast_data, icon, **kwargs):
 			currently = forecast_data.currently()
-			byHour = forecast_data.hourly()
+			hourly_forecast = forecast_data.hourly()
 			worst_change = currently.precipProbability;
 			hour_difference = forecast_data.request_time.replace(minute=0, second=0, microsecond=0) - currently.time.replace(minute=0, second=0, microsecond=0)
-			rain_forecast = [
-				{
-					'contents': ' {0}'.format( icons['rainy']),
-					'highlight_groups': ['weather_condition_rainy', 'weather_conditions', 'weather'],
-					'divider_highlight_group': 'background:divider',
-				},
-				{
-					'contents': ' {0}%'.format( math.trunc(worst_change * 100)),
-					'highlight_groups': ['weather_temp_gradient', 'weather_temp', 'weather'],
-					'divider_highlight_group': 'background:divider',
-					'gradient_level': math.trunc(worst_change * 100)
-				},
-				{
-					#'contents': ' {0}'.format( (forecast_data.request_time).strftime("%H:%M")),
-					'divider_highlight_group': 'background:divider',
-				}
-			]
-			for hourData in byHour.data[1:]:
-				if math.trunc(hourData.precipProbability * 100) > math.trunc(worst_change * 100) and len(rain_forecast) <= 9:
-					worst_change = hourData.precipProbability
+			rain_forecast = []
+			if not WeatherSegment.is_rain_forecast(currently) and worst_change > 0:
+				rain_forecast += [
+					{
+						'contents': ' {0}'.format(icon),
+						'highlight_groups': ['weather_condition_rainy', 'weather_conditions', 'weather'],
+						'divider_highlight_group': 'background:divider',
+					},
+					{
+						'contents': ' {0}%'.format( math.trunc(worst_change * 100)),
+						'highlight_groups': ['weather_temp_gradient', 'weather_temp', 'weather'],
+						'divider_highlight_group': 'background:divider',
+						'gradient_level': math.trunc(worst_change * 100)
+					}
+				]
+			rain_forecast_counter = 0
+			for hour_forecast in hourly_forecast.data[1:]:
+				if (math.trunc(hour_forecast.precipProbability * 100) > math.trunc(worst_change * 100)
+				    and WeatherSegment.is_rain_forecast(hour_forecast) and rain_forecast_counter <= 6):
+					rain_forecast_counter += 1
+					worst_change = hour_forecast.precipProbability
 					rain_forecast += [
 						{
-							#'contents': ' {0}'.format( icons['rainy']),
-							'highlight_groups': ['weather_condition_rainy', 'weather_conditions', 'weather'],
-							'divider_highlight_group': 'background:divider',
-						},
-						{
 							'contents': ' {0}%'.format( math.trunc(worst_change * 100)),
-							'highlight_groups': ['weather_temp_gradient', 'weather_temp', 'weather'],
+							'highlight_groups': ['weather_rain_gradient', 'weather_rain', 'weather'],
 							'divider_highlight_group': 'background:divider',
 							'gradient_level': math.trunc(worst_change * 100)
 						},
 						{
-							'contents': ' {0}'.format( (hourData.time + hour_difference).strftime("%Hh")),
+							'contents': '/{0}'.format( (hour_forecast.time + hour_difference).strftime("%Hh")),
 							'divider_highlight_group': 'background:divider',
 						}
 					]
-				if 'rain' not in hourData.summary.lower() and 'drizzle' not in hourData.summary.lower():
+				if not WeatherSegment.is_rain_forecast(hour_forecast):
 					rain_forecast.append(
 						{
-							'contents': ' ' + hourData.summary + '/' + (hourData.time + hour_difference).strftime("%Hh"),
+							'contents': ' ' + hour_forecast.summary + '/' + (hour_forecast.time + hour_difference).strftime("%Hh"),
 							'divider_highlight_group': 'background:divider',
 						}
 					)
 					break
 			if worst_change > 0:
-				line = line + rain_forecast
-		return line
+				return rain_forecast
+			return []
 
+	@staticmethod
+	def is_rain_forecast(hour_forecast):
+		return 'rain' in hour_forecast.summary.lower() or 'drizzle' in hour_forecast.summary.lower()
 
 weather = with_docstring(WeatherSegment(),
 '''Return weather from Yahoo! Weather.
