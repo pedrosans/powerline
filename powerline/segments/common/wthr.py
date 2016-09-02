@@ -105,18 +105,19 @@ temp_units = {
 }
 
 _WeatherKey = namedtuple('Key', 'location_query forecast_io')
-_ForecastKey = namedtuple('Key', 'api_keys lat lng precipitation_probability')
+_ForecastKey = namedtuple('Key', 'api_keys lat lng')
 
 class WeatherSegment(KwThreadedSegment):
 	interval = 600
 	default_location = None
 	location_urls = {}
+	evaluations_cache = {}
 
 	@staticmethod
 	def key(location_query=None, forecast_io=None, **kwargs):
 		return _WeatherKey(
 			location_query,
-			_ForecastKey(forecast_io['api_keys'], forecast_io['lat'], forecast_io['lng'], forecast_io['precipitation_probability'])
+			_ForecastKey(forecast_io['api_keys'], forecast_io['lat'], forecast_io['lng'])
 		)
 
 	def get_request_url(self, location_query):
@@ -175,6 +176,7 @@ class WeatherSegment(KwThreadedSegment):
 				try:
 					forecast_data = forecastio.load_forecast(api_key, key.forecast_io.lat, key.forecast_io.lng)
 					forecast_data.request_time = datetime.datetime.now()
+					evaluations_cache = {}
 					break
 				except (KeyError, ValueError):
 					self.exception('cant access forecastio: {0}', ValueError)
@@ -186,6 +188,25 @@ class WeatherSegment(KwThreadedSegment):
 			return None
 
 		temp, icon_names, forecast_data = weather
+
+		if forecast_io['evaluations'] is not None:
+			for evaluation in forecast_io['evaluations']:
+				if evaluation['name'] in self.evaluations_cache:
+					return self.evaluations_cache[evaluation['name']]
+				else:
+					formula = lambda forecast: eval(evaluation['formula'])
+					currently = forecast_data.currently()
+					hour_difference = forecast_data.request_time.replace(minute=0, second=0, microsecond=0) - currently.time.replace(minute=0, second=0, microsecond=0)
+					best = 0
+					best_forecast = forecast_data.currently()
+					for forecast in forecast_data.hourly().data[1:]:
+						hour_eval = formula(forecast)
+						if hour_eval > best:
+							best = hour_eval
+							best_forecast = forecast
+					evaluation_result = [{'contents': evaluation['name'].format(forecast = best_forecast)}]
+					self.evaluations_cache[evaluation['name']] = evaluation_result
+					return evaluation_result
 
 		for icon_name in icon_names:
 			if icons:
