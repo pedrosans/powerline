@@ -189,7 +189,7 @@ class WeatherSegment(KwThreadedSegment):
 
 		temp, icon_names, forecast_data = weather
 
-		if forecast_io['evaluations'] is not None:
+		if 'evaluations' in forecast_io:
 			for evaluation in forecast_io['evaluations']:
 				if evaluation['name'] in self.evaluations_cache:
 					return self.evaluations_cache[evaluation['name']]
@@ -241,45 +241,23 @@ class WeatherSegment(KwThreadedSegment):
 		if forecast_io is not None:
 			line += self.render_forecast(forecast_data, icons['rainy'])
 		return line
-	def render_forecast(self, forecast_data, icon, **kwargs):
+	def render_forecast(self, forecast_data, rainy_icon, **kwargs):
 			currently = forecast_data.currently()
-			hourly_forecast = forecast_data.hourly()
-			worst_change = currently.precipProbability;
+			worst_prediction = currently.precipProbability;
 			hour_difference = forecast_data.request_time.replace(minute=0, second=0, microsecond=0) - currently.time.replace(minute=0, second=0, microsecond=0)
 			rain_forecast = []
-			if not WeatherSegment.is_rain_forecast(currently) and worst_change > 0:
-				rain_forecast += [
-					{
-						'contents': ' {0}'.format(icon),
-						'highlight_groups': ['weather_condition_rainy', 'weather_conditions', 'weather'],
-						'divider_highlight_group': 'background:divider',
-					},
-					{
-						'contents': ' {0}%'.format( math.trunc(worst_change * 100)),
-						'highlight_groups': ['weather_temp_gradient', 'weather_temp', 'weather'],
-						'divider_highlight_group': 'background:divider',
-						'gradient_level': math.trunc(worst_change * 100)
-					}
-				]
+			icon_shown = False
 			rain_forecast_counter = 0
-			for hour_forecast in hourly_forecast.data[1:]:
-				if (math.trunc(hour_forecast.precipProbability * 100) > math.trunc(worst_change * 100)
-				    and WeatherSegment.is_rain_forecast(hour_forecast) and rain_forecast_counter <= 6):
+			if not WeatherSegment.is_rain_forecast(currently) and worst_prediction > 0:
+				rain_forecast += WeatherSegment.assemble_rain_forecast(currently, rainy_icon, None)
+				icon_shown = True
+			for hour_forecast in forecast_data.hourly().data[1:]:
+				if (math.trunc(hour_forecast.precipProbability * 100) > math.trunc(worst_prediction * 100) and WeatherSegment.is_rain_forecast(hour_forecast) and rain_forecast_counter < 3):
 					rain_forecast_counter += 1
-					worst_change = hour_forecast.precipProbability
-					rain_forecast += [
-						{
-							'contents': ' {0}%'.format( math.trunc(worst_change * 100)),
-							'highlight_groups': ['weather_rain_gradient', 'weather_rain', 'weather'],
-							'divider_highlight_group': 'background:divider',
-							'gradient_level': math.trunc(worst_change * 100)
-						},
-						{
-							'contents': '/{0}'.format( (hour_forecast.time + hour_difference).strftime("%Hh")),
-							'divider_highlight_group': 'background:divider',
-						}
-					]
-				if not WeatherSegment.is_rain_forecast(hour_forecast):
+					worst_prediction = hour_forecast.precipProbability
+					rain_forecast += WeatherSegment.assemble_rain_forecast(hour_forecast, (None if icon_shown else rainy_icon), (hour_forecast.time + hour_difference))
+					icon_shown = True
+				if rain_forecast_counter > 0 and not WeatherSegment.is_rain_forecast(hour_forecast):
 					rain_forecast.append(
 						{
 							'contents': ' ' + hour_forecast.summary + '/' + (hour_forecast.time + hour_difference).strftime("%Hh"),
@@ -287,13 +265,40 @@ class WeatherSegment(KwThreadedSegment):
 						}
 					)
 					break
-			if worst_change > 0:
-				return rain_forecast
-			return []
+			return rain_forecast
 
 	@staticmethod
 	def is_rain_forecast(hour_forecast):
 		return 'rain' in hour_forecast.summary.lower() or 'drizzle' in hour_forecast.summary.lower()
+
+	@staticmethod
+	def assemble_rain_forecast(data, rainy_icon, hour):
+		hour_forecast = []
+		if rainy_icon is not None:
+			hour_forecast.append(
+				{
+					'contents': ' {0}'.format(rainy_icon),
+					'highlight_groups': ['weather_condition_rainy', 'weather_conditions', 'weather'],
+					'divider_highlight_group': 'background:divider',
+				}
+			)
+		hour_forecast.append(
+			{
+				'contents': ' {0}%'.format( math.trunc(data.precipProbability * 100)),
+				'highlight_groups': ['weather_rain_gradient', 'weather_rain', 'weather'],
+				'divider_highlight_group': 'background:divider',
+				'gradient_level': math.trunc(data.precipProbability * 100)
+			}
+		)
+		if hour:
+			hour_forecast.append(
+				{
+					'contents': '/{0}'.format( hour.strftime("%Hh")),
+					'divider_highlight_group': 'background:divider',
+				}
+			)
+		return hour_forecast
+
 
 weather = with_docstring(WeatherSegment(),
 '''Return weather from Yahoo! Weather.
