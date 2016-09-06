@@ -117,7 +117,7 @@ class WeatherSegment(KwThreadedSegment):
 	def key(location_query=None, forecast_io=None, **kwargs):
 		return _WeatherKey(
 			location_query,
-			_ForecastKey(forecast_io['api_keys'], forecast_io['lat'], forecast_io['lng'])
+			_ForecastKey(forecast_io['api_keys'], forecast_io['lat'], forecast_io['lng']) if forecast_io is not None else None
 		)
 
 	def get_request_url(self, location_query):
@@ -171,10 +171,11 @@ class WeatherSegment(KwThreadedSegment):
 				icon_names = ('unknown',)
 				self.error('Unknown condition code: {0}', condition_code)
 
-		if key.forecast_io.api_keys is not None:
+		forecast_data = None
+		if key.forecast_io is not None:
 			for api_key in key.forecast_io.api_keys.split(","):
 				try:
-					forecast_data = forecastio.load_forecast(api_key, key.forecast_io.lat, key.forecast_io.lng)
+					forecast_data = forecastio.load_forecast(api_key, key.forecast_io.lat, key.forecast_io.lng, None, 'ca')
 					forecast_data.request_time = datetime.datetime.now()
 					forecast_data.currently_data = forecast_data.currently()
 					hour_difference = forecast_data.request_time.replace(minute=0, second=0, microsecond=0) - forecast_data.currently_data.time.replace(minute=0, second=0, microsecond=0)
@@ -212,21 +213,22 @@ class WeatherSegment(KwThreadedSegment):
 		else:
 			gradient_level = (temp - temp_coldest) * 100.0 / (temp_hottest - temp_coldest)
 		groups = ['weather_condition_' + icon_name for icon_name in icon_names] + ['weather_conditions', 'weather']
-		line = [
-			{
-				'contents': icon + ' ',
-				'highlight_groups': groups,
-				'divider_highlight_group': 'background:divider',
-			},
-			{
-				'contents': temp_format.format(temp=converted_temp),
-				'highlight_groups': ['weather_temp_gradient', 'weather_temp', 'weather'],
-				'divider_highlight_group': 'background:divider',
-				'gradient_level': gradient_level,
-			},
-		]
-		if forecast_io is not None:
-			line += self.render_forecast(forecast_data, icons['rainy'])
+		if forecast_io is None:
+			return [
+				{
+					'contents': icon + ' ',
+					'highlight_groups': groups,
+					'divider_highlight_group': 'background:divider',
+				},
+				{
+					'contents': temp_format.format(temp=converted_temp),
+					'highlight_groups': ['weather_temp_gradient', 'weather_temp', 'weather'],
+					'divider_highlight_group': 'background:divider',
+					'gradient_level': gradient_level,
+				},
+			]
+		else:
+			line = self.render_forecast(forecast_data, icons)
 			if 'evaluations' in forecast_io:
 				for evaluation in forecast_io['evaluations']:
 					if evaluation['name'] in self.evaluations_cache:
@@ -235,38 +237,34 @@ class WeatherSegment(KwThreadedSegment):
 						formula = lambda forecast: eval(evaluation['formula'])
 						best_eval = 0
 						best_forecast = forecast_data.hourly_data[1]
-						for forecast in forecast_data.hourly_data[1:25]:
+						for forecast in forecast_data.hourly_data[1:24]:
 							hour_eval = formula(forecast)
 							if hour_eval > best_eval:
 								best_eval = hour_eval
 								best_forecast = forecast
-						evaluation_result = [{'contents': ' ' + evaluation['name'].format(forecast = best_forecast)}]
+						evaluation_result = [{'contents': evaluation['name'].format(forecast = best_forecast)}]
 						self.evaluations_cache[evaluation['name']] = evaluation_result
 						line += evaluation_result
+			return line
 
-		return line
-
-	def render_forecast(self, forecast_data, rainy_icon, **kwargs):
+	def render_forecast(self, forecast_data, icons, **kwargs):
 			worst_prediction = forecast_data.currently_data.precipProbability;
 			rain_forecast = []
 			icon_shown = False
 			rain_forecast_counter = 0
-			if not WeatherSegment.is_rain_forecast(forecast_data.currently_data) and worst_prediction > 0:
-				rain_forecast += WeatherSegment.assemble_rain_forecast(forecast_data.currently_data, rainy_icon, None)
+			if WeatherSegment.is_rain_forecast(forecast_data.currently_data):
 				icon_shown = True
-			for hour_forecast in forecast_data.hourly_data[1:]:
+			elif worst_prediction > 0:
+				rain_forecast += WeatherSegment.assemble_rain_forecast(forecast_data.currently_data, icons[forecast_data.currently_data.icon], None)
+				icon_shown = True
+			for hour_forecast in forecast_data.hourly_data[1:24]:
 				if (math.trunc(hour_forecast.precipProbability * 100) > math.trunc(worst_prediction * 100) and WeatherSegment.is_rain_forecast(hour_forecast) and rain_forecast_counter < 3):
 					rain_forecast_counter += 1
 					worst_prediction = hour_forecast.precipProbability
-					rain_forecast += WeatherSegment.assemble_rain_forecast(hour_forecast, (None if icon_shown else rainy_icon), hour_forecast.time)
+					rain_forecast += WeatherSegment.assemble_rain_forecast(hour_forecast, (None if icon_shown else icons[hour_forecast.icon]), hour_forecast.time)
 					icon_shown = True
 				if rain_forecast_counter > 0 and not WeatherSegment.is_rain_forecast(hour_forecast):
-					rain_forecast.append(
-						{
-							'contents': ' ' + hour_forecast.summary + '/' + hour_forecast.time.strftime("%Hh"),
-							'divider_highlight_group': 'background:divider',
-						}
-					)
+					rain_forecast += WeatherSegment.assemble_rain_forecast(hour_forecast, icons[hour_forecast.icon], hour_forecast.time)
 					break
 			return rain_forecast
 
@@ -280,14 +278,14 @@ class WeatherSegment(KwThreadedSegment):
 		if rainy_icon is not None:
 			hour_forecast.append(
 				{
-					'contents': ' {0}'.format(rainy_icon),
+					'contents': '{0} '.format(rainy_icon),
 					'highlight_groups': ['weather_condition_rainy', 'weather_conditions', 'weather'],
 					'divider_highlight_group': 'background:divider',
 				}
 			)
 		hour_forecast.append(
 			{
-				'contents': ' {0}%'.format( math.trunc(data.precipProbability * 100)),
+				'contents': '{0}%'.format( math.trunc(data.precipProbability * 100)),
 				'highlight_groups': ['weather_rain_gradient', 'weather_rain', 'weather'],
 				'divider_highlight_group': 'background:divider',
 				'gradient_level': math.trunc(data.precipProbability * 100)
@@ -296,7 +294,7 @@ class WeatherSegment(KwThreadedSegment):
 		if hour:
 			hour_forecast.append(
 				{
-					'contents': '/{0}'.format( hour.strftime("%Hh")),
+					'contents': '/{0} '.format( hour.strftime("%Hh")),
 					'divider_highlight_group': 'background:divider',
 				}
 			)
