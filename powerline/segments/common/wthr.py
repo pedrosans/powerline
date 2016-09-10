@@ -228,7 +228,8 @@ class WeatherSegment(KwThreadedSegment):
 				},
 			]
 		else:
-			line = self.render_forecast(forecast_data, icons)
+			if forecast_io['show_precipitation_probability']:
+				line = self.render_forecast(forecast_data, icons)
 			if 'evaluations' in forecast_io:
 				for evaluation in forecast_io['evaluations']:
 					if evaluation['name'] in self.evaluations_cache:
@@ -242,7 +243,7 @@ class WeatherSegment(KwThreadedSegment):
 							if hour_eval > best_eval:
 								best_eval = hour_eval
 								best_forecast = forecast
-						evaluation_result = [{'contents': evaluation['name'].format(forecast = best_forecast)}]
+						evaluation_result = [{'contents': ('| ' if line else '') +  evaluation['name'].format(forecast = best_forecast)}]
 						self.evaluations_cache[evaluation['name']] = evaluation_result
 						line += evaluation_result
 			return line
@@ -255,7 +256,7 @@ class WeatherSegment(KwThreadedSegment):
 			if WeatherSegment.is_rain_forecast(forecast_data.currently_data):
 				icon_shown = True
 			elif worst_prediction > 0:
-				rain_forecast += WeatherSegment.assemble_rain_forecast(forecast_data.currently_data, icons[forecast_data.currently_data.icon], None)
+				rain_forecast += WeatherSegment.assemble_rain_forecast(forecast_data.currently_data, icons['rain'], None)
 				icon_shown = True
 			for hour_forecast in forecast_data.hourly_data[1:24]:
 				if (math.trunc(hour_forecast.precipProbability * 100) > math.trunc(worst_prediction * 100) and WeatherSegment.is_rain_forecast(hour_forecast) and rain_forecast_counter < 3):
@@ -294,10 +295,11 @@ class WeatherSegment(KwThreadedSegment):
 		if hour:
 			hour_forecast.append(
 				{
-					'contents': '/{0} '.format( hour.strftime("%Hh")),
+					'contents': '/{0}'.format( hour.strftime("%Hh")),
 					'divider_highlight_group': 'background:divider',
 				}
 			)
+		hour_forecast.append({'contents': ' ' })
 		return hour_forecast
 
 
