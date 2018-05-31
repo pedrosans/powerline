@@ -2,6 +2,7 @@
 from __future__ import (unicode_literals, division, absolute_import, print_function)
 
 import os
+import os, glob, subprocess, shlex, re
 
 from powerline.lib.unicode import out_u
 from powerline.theme import requires_segment_info
@@ -9,13 +10,18 @@ from powerline.segments import Segment, with_docstring
 
 
 @requires_segment_info
-def environment(pl, segment_info, variable=None):
+def environment(pl, segment_info, variable=None, command=None):
 	'''Return the value of any defined environment variable
 
 	:param string variable:
 		The environment variable to return if found
 	'''
+	if command:
+		proc = subprocess.Popen(command, executable='bash', shell=True, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+		result = proc.communicate()[0].decode('utf-8')
+		return result.splitlines()[0]
 	return segment_info['environ'].get(variable, None)
+
 
 
 @requires_segment_info
