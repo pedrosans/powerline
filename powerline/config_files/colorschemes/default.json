@@ -18,6 +18,7 @@
 		"email_alert_gradient":       { "fg": "white", "bg": "yellow_orange_red", "attrs": ["bold"] },
 		"hostname":                   { "fg": "black", "bg": "gray10", "attrs": ["bold"] },
 		"weather":                    { "fg": "gray8", "bg": "gray0", "attrs": [] },
+		"weather_rain_gradient":      { "fg": "blue_red", "bg": "gray0", "attrs": [] },
 		"weather_temp_gradient":      { "fg": "blue_red", "bg": "gray0", "attrs": [] },
 		"weather_condition_hot":      { "fg": "khaki1", "bg": "gray0", "attrs": [] },
 		"weather_condition_snowy":    { "fg": "skyblue1", "bg": "gray0", "attrs": [] },
