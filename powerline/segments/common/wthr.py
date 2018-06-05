@@ -265,7 +265,10 @@ class WeatherSegment(KwThreadedSegment):
 					rain_forecast += WeatherSegment.assemble_rain_forecast(hour_forecast, (None if icon_shown else icons[hour_forecast.icon]), hour_forecast.time)
 					icon_shown = True
 				if rain_forecast_counter > 0 and not WeatherSegment.is_rain_forecast(hour_forecast):
-					rain_forecast += WeatherSegment.assemble_rain_forecast(hour_forecast, icons[hour_forecast.icon], hour_forecast.time)
+					icon = None
+					if hour_forecast.icon in icons:
+						icon = icons[hour_forecast.icon]
+					rain_forecast += WeatherSegment.assemble_rain_forecast(hour_forecast, icon, hour_forecast.time)
 					break
 			return rain_forecast
 
@@ -284,6 +287,8 @@ class WeatherSegment(KwThreadedSegment):
 					'divider_highlight_group': 'background:divider',
 				}
 			)
+		else:
+			hour_forecast.append({'contents': ' ' })
 		hour_forecast.append(
 			{
 				'contents': '{0}%'.format( math.trunc(data.precipProbability * 100)),
@@ -299,7 +304,6 @@ class WeatherSegment(KwThreadedSegment):
 					'divider_highlight_group': 'background:divider',
 				}
 			)
-		hour_forecast.append({'contents': ' ' })
 		return hour_forecast
 
 
