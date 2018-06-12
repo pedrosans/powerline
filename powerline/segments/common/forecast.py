@@ -2,10 +2,14 @@
 from __future__ import (unicode_literals, division, absolute_import, print_function)
 
 import json
+import forecastio
+import datetime
+import math
 
 from powerline.lib.url import urllib_read, urllib_urlencode
 from powerline.lib.threaded import KwThreadedSegment
 from powerline.segments import with_docstring
+from collections import namedtuple
 
 
 # XXX Warning: module name must not be equal to the segment name as long as this
@@ -100,15 +104,21 @@ temp_units = {
 	'K': 'K',
 }
 
+_WeatherKey = namedtuple('Key', 'location_query forecast_io')
+_ForecastKey = namedtuple('Key', 'api_keys lat lng')
 
 class WeatherSegment(KwThreadedSegment):
 	interval = 600
 	default_location = None
 	location_urls = {}
+	evaluations_cache = {}
 
 	@staticmethod
-	def key(location_query=None, **kwargs):
-		return location_query
+	def key(location_query=None, forecast_io=None, **kwargs):
+		return _WeatherKey(
+			location_query,
+			_ForecastKey(forecast_io['api_keys'], forecast_io['lat'], forecast_io['lng']) if forecast_io is not None else None
+		)
 
 	def get_request_url(self, location_query):
 		try:
@@ -135,8 +145,8 @@ class WeatherSegment(KwThreadedSegment):
 				'http://query.yahooapis.com/v1/public/yql?' + urllib_urlencode(query_data))
 			return url
 
-	def compute_state(self, location_query):
-		url = self.get_request_url(location_query)
+	def compute_state(self, key):
+		url = self.get_request_url(key.location_query)
 		raw_response = urllib_read(url)
 		if not raw_response:
 			self.error('Failed to get response')
@@ -161,13 +171,30 @@ class WeatherSegment(KwThreadedSegment):
 				icon_names = ('unknown',)
 				self.error('Unknown condition code: {0}', condition_code)
 
-		return (temp, icon_names)
+		forecast_data = None
+		if key.forecast_io is not None:
+			for api_key in key.forecast_io.api_keys.split(","):
+				try:
+					forecast_data = forecastio.load_forecast(api_key, key.forecast_io.lat, key.forecast_io.lng, None, 'ca')
+					forecast_data.request_time = datetime.datetime.now()
+					forecast_data.currently_data = forecast_data.currently()
+					hour_difference = forecast_data.request_time.replace(minute=0, second=0, microsecond=0) - forecast_data.currently_data.time.replace(minute=0, second=0, microsecond=0)
+					forecast_data.currently_data.time = forecast_data.currently_data.time + hour_difference
+					forecast_data.hourly_data = forecast_data.hourly().data
+					for hour_forecast in forecast_data.hourly_data:
+						hour_forecast.time = hour_forecast.time + hour_difference
+					evaluations_cache = {}
+					break
+				except (KeyError, ValueError):
+					self.exception('cant access forecastio: {0}', ValueError)
 
-	def render_one(self, weather, icons=None, unit='C', temp_format=None, temp_coldest=-30, temp_hottest=40, **kwargs):
+		return (temp, icon_names, forecast_data)
+
+	def render_one(self, weather, icons=None, unit='C', temp_format=None, temp_coldest=-30, temp_hottest=40, forecast_io=None, **kwargs):
 		if not weather:
 			return None
 
-		temp, icon_names = weather
+		temp, icon_names, forecast_data = weather
 
 		for icon_name in icon_names:
 			if icons:
@@ -186,19 +213,97 @@ class WeatherSegment(KwThreadedSegment):
 		else:
 			gradient_level = (temp - temp_coldest) * 100.0 / (temp_hottest - temp_coldest)
 		groups = ['weather_condition_' + icon_name for icon_name in icon_names] + ['weather_conditions', 'weather']
-		return [
+		if forecast_io is None:
+			return [
+				{
+					'contents': icon + ' ',
+					'highlight_groups': groups,
+					'divider_highlight_group': 'background:divider',
+				},
+				{
+					'contents': temp_format.format(temp=converted_temp),
+					'highlight_groups': ['weather_temp_gradient', 'weather_temp', 'weather'],
+					'divider_highlight_group': 'background:divider',
+					'gradient_level': gradient_level,
+				},
+			]
+		else:
+			if forecast_io['show_precipitation_probability']:
+				line = self.render_forecast(forecast_data, icons)
+			if 'evaluations' in forecast_io:
+				for evaluation in forecast_io['evaluations']:
+					if evaluation['name'] in self.evaluations_cache:
+						line += self.evaluations_cache[evaluation['name']]
+					else:
+						formula = lambda forecast: eval(evaluation['formula'])
+						best_eval = 0
+						best_forecast = forecast_data.hourly_data[1]
+						for forecast in forecast_data.hourly_data[1:24]:
+							hour_eval = formula(forecast)
+							if hour_eval > best_eval:
+								best_eval = hour_eval
+								best_forecast = forecast
+						evaluation_result = [{'contents': ('| ' if line else '') +  evaluation['name'].format(forecast = best_forecast)}]
+						self.evaluations_cache[evaluation['name']] = evaluation_result
+						line += evaluation_result
+			return line
+
+	def render_forecast(self, forecast_data, icons, **kwargs):
+			worst_prediction = forecast_data.currently_data.precipProbability;
+			rain_forecast = []
+			icon_shown = False
+			rain_forecast_counter = 0
+			if WeatherSegment.is_rain_forecast(forecast_data.currently_data):
+				icon_shown = True
+			elif worst_prediction > 0:
+				rain_forecast += WeatherSegment.assemble_rain_forecast(forecast_data.currently_data, icons['rain'], None)
+				icon_shown = True
+			for hour_forecast in forecast_data.hourly_data[1:24]:
+				if (math.trunc(hour_forecast.precipProbability * 100) > math.trunc(worst_prediction * 100) and WeatherSegment.is_rain_forecast(hour_forecast) and rain_forecast_counter < 3):
+					rain_forecast_counter += 1
+					worst_prediction = hour_forecast.precipProbability
+					rain_forecast += WeatherSegment.assemble_rain_forecast(hour_forecast, (None if icon_shown else icons[hour_forecast.icon]), hour_forecast.time)
+					icon_shown = True
+				if rain_forecast_counter > 0 and not WeatherSegment.is_rain_forecast(hour_forecast):
+					icon = None
+					if hour_forecast.icon in icons:
+						icon = icons[hour_forecast.icon]
+					rain_forecast += WeatherSegment.assemble_rain_forecast(hour_forecast, icon, hour_forecast.time)
+					break
+			return rain_forecast
+
+	@staticmethod
+	def is_rain_forecast(hour_forecast):
+		return 'rain' in hour_forecast.summary.lower() or 'drizzle' in hour_forecast.summary.lower()
+
+	@staticmethod
+	def assemble_rain_forecast(data, rainy_icon, hour):
+		hour_forecast = []
+		if rainy_icon is not None:
+			hour_forecast.append(
+				{
+					'contents': '{0} '.format(rainy_icon),
+					'divider_highlight_group': 'background:divider',
+				}
+			)
+		elif hour:
+			hour_forecast.append({'contents': ' ' })
+		hour_forecast.append(
 			{
-				'contents': icon + ' ',
-				'highlight_groups': groups,
+				'contents': '{0}%'.format( math.trunc(data.precipProbability * 100)),
+				'highlight_groups': ['weather_rain_gradient', 'weather_rain', 'weather'],
 				'divider_highlight_group': 'background:divider',
-			},
-			{
-				'contents': temp_format.format(temp=converted_temp),
-				'highlight_groups': ['weather_temp_gradient', 'weather_temp', 'weather'],
-				'divider_highlight_group': 'background:divider',
-				'gradient_level': gradient_level,
-			},
-		]
+				'gradient_level': math.trunc(data.precipProbability * 100)
+			}
+		)
+		if hour:
+			hour_forecast.append(
+				{
+					'contents': '/{0}'.format( hour.strftime("%Hh")),
+					'divider_highlight_group': 'background:divider',
+				}
+			)
+		return hour_forecast
 
 
 weather = with_docstring(WeatherSegment(),
