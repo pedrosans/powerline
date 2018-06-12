@@ -85,6 +85,22 @@
 				}
 			}
 		},
+		"powerline.segments.common.forecast.weather": {
+			"args": {
+				"icons": {
+					"clear-day": "〇",
+					"clear-night": "☾",
+					"rain": "☔",
+					"snow": "❅",
+					"sleet": "☔",
+					"wind": "☴",
+					"fog": "≡",
+					"cloudy": "☁",
+					"partly-cloudy-day": "☁",
+					"partly-cloudy-night": "☁"
+				}
+			}
+		},
 		"powerline.segments.common.time.fuzzy_time": {
 			"args": {
 				"unicode_text": true
